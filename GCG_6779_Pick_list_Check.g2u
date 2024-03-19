@@ -1,0 +1,148 @@
+﻿Program.Sub.Preflight.Start
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+'Quote:13470-0
+'WAYNE WIRE CLOTH PRODUCTS, INC
+'Sam Stanka 6/1/2022
+
+'A GAB script will be added to the OK Hook (38628) of the ORD055B screen.  When the user presses OK, the script will perform the following actions:
+'Check the sales order, or range of sales orders, from the selection criteria to see if the order is on hold.  For any order that's no hold, the script will keep a running list.
+'Once the script has finished checking all the orders in the range it will do the following:
+	'If all orders selected are on hold
+		'Display a message to the user with the list of orders on hold
+		'Cancel the report process so the program returns to the selection screen
+		'Exit the GAB script
+	'If some orders are on hold, but not all
+		'Display a message to the user with the list of orders on hold, and state that the process will continue
+		'Exit the script and let the program continue printing the orders that can be printed.
+	'If no orders are on hold
+		'Exit the script and let the program continue
+
+
+Function.Intrinsic.UI.UsePixels ' Allows you to use Pixels instead of Twips throughout
+
+F.Intrinsic.Control.Try
+	V.Local.sError.Declare
+	V.Local.sFilter.Declare
+	V.Local.sSOStart.Declare
+	V.Local.sSOEnd.Declare
+	V.Local.dDateStart.Declare
+	V.Local.dDateEnd.Declare
+	V.Local.iRowCount.Declare
+	V.Local.iRowCount2.Declare
+	v.Local.iCnt.Declare
+	v.Local.sMsg.Declare
+	v.Local.sSQL.Declare
+	
+	'check to see what hook we are running this from, if its not OK Hook on ORD055B screen, then end
+	F.Intrinsic.Control.If(V.Caller.Hook,<>,"38628")
+		F.Intrinsic.Control.End
+	F.Intrinsic.Control.EndIf
+
+	F.Intrinsic.Control.If(v.Ambient.IsInTaskScheduler)
+		F.Intrinsic.Control.End
+	F.Intrinsic.Control.EndIf
+	
+	'v.passed.000031 Beg order
+	'v.passed.000032 End order
+	'v.passed.000033 All orders check box Y/N
+	
+	'Variable.Passed.000041 Beg Cust
+	'Variable.Passed.000044 End Cust
+	'Variable.Passed.000001 All Cust check box Y/N
+	
+	'Variable.Passed.000013 Beg Promise Date  
+	'Variable.Passed.000016 End Promise Date
+	'Variable.Passed.000015 All Dates check box Y/N
+
+	'SHP_HLD_FLAG 0/1 not on hold, 2/4 on hold
+
+	'All orders check box Y/N
+	F.Intrinsic.Control.If(V.Passed.000033,=,"N")
+		F.Intrinsic.String.LPad(V.Passed.000031,"0",7,V.Local.sSOStart)
+		F.Intrinsic.String.LPad(V.Passed.000032,"0",7,V.Local.sSOEnd)
+		F.Intrinsic.String.Build("Where A.ORDER_NO Between '{0}' and '{1}'",V.Local.sSOStart,V.Local.sSOEnd,V.Local.sFilter)
+	F.Intrinsic.Control.EndIf
+	
+	'All Cust check box Y/N
+	F.Intrinsic.Control.If(V.Passed.000001,=,"N")
+		F.Intrinsic.Control.If(V.Local.sFilter,=,"")
+			F.Intrinsic.String.Build("Where A.CUSTOMER Between '{0}' and '{1}'",Variable.Passed.000041,Variable.Passed.000044,V.Local.sFilter)
+		F.Intrinsic.Control.Else
+			F.Intrinsic.String.Build("{0} and A.CUSTOMER Between '{1}' and '{2}'",V.Local.sFilter,Variable.Passed.000041,Variable.Passed.000044,V.Local.sFilter)
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.EndIf
+	
+'Waiting on R&D to fix these passed var before implementing this portion of the script
+	'All Dates check box Y/N
+'	F.Intrinsic.Control.If(V.Passed.000015,=,"N")
+'		V.Local.dDateStart.Set(v.passed.000013)
+'		V.Local.dDateEnd.Set(v.passed.000016)
+'		F.Intrinsic.Control.If(V.Local.sFilter,=,"")
+'			F.Intrinsic.String.Build("Where A.DATE_ITEM_PROM Between '{0}' and '{1}'",v.Local.dDateStart.PervasiveDate,v.Local.dDateEnd.PervasiveDate,V.Local.sFilter)
+'		F.Intrinsic.Control.Else
+'			F.Intrinsic.String.Build("{0} and A.DATE_ITEM_PROM Between '{1}' and '{2}'",V.Local.sFilter,v.Local.dDateStart.PervasiveDate,v.Local.dDateEnd.PervasiveDate,V.Local.sFilter)
+'		F.Intrinsic.Control.EndIf
+'	F.Intrinsic.Control.EndIf
+	
+	F.Intrinsic.String.Build("Select A.Order_NO, A.Record_NO, A.Customer, A.DATE_ITEM_PROM, B.SHP_HLD_FLAG From V_ORDER_LINES A Left Join V_ORDER_HEADER B on A.ORDER_NO = B.ORDER_NO {0}",V.Local.sFilter,v.Local.sSQL)
+	F.ODBC.Connection!con.OpenCompanyConnection
+	F.Data.Datatable.CreateFromSQL("dtPickList","con",V.Local.sSQL,True)
+	F.ODBC.Connection!con.Close
+	
+	V.Local.iRowCount.Set(V.DataTable.dtPickList.RowCount)
+	F.Intrinsic.Control.If(V.Local.iRowCount,=,0)
+	'No orders found in the selected ranges, end and let the core program tell the user that.
+		f.Intrinsic.Control.End
+	F.Intrinsic.Control.EndIf
+	
+	'Filter orders to the ones that are on hold 2/4
+	f.Data.DataView.Create("dtPickList","dvPickList","22","SHP_HLD_FLAG <> '0' and SHP_HLD_FLAG <> '1'","")
+	
+	V.Local.iRowCount2.Set(V.dataview.dtPickList!dvPickList.RowCount)
+	F.Intrinsic.Control.If(V.Local.iRowCount2,=,0)
+	'No orders are on hold
+		f.Intrinsic.Control.End
+	F.Intrinsic.Control.EndIf
+	
+	'Grab List of orders on Hold
+	F.Data.DataView.ToDataTableDistinct("dtPickList","dvPickList","dtOrdersHold","Order_NO",True)
+	f.Intrinsic.Control.For(v.Local.iCnt,0,V.DataTable.dtOrdersHold.RowCount--,1)
+		F.Intrinsic.Control.If(v.Local.iCnt,=,0)
+			F.Intrinsic.String.Build("{0}",V.DataTable.dtOrdersHold(V.Local.iCnt).Order_NO!fieldValtrim,v.Local.sMsg)
+		F.Intrinsic.Control.Else
+			F.Intrinsic.String.Build("{0}, {1}",v.Local.sMsg,V.DataTable.dtOrdersHold(V.Local.iCnt).Order_NO!fieldValtrim,v.Local.sMsg)
+		F.Intrinsic.Control.EndIf
+	f.Intrinsic.Control.Next(v.Local.iCnt)
+	
+	F.Intrinsic.Control.If(V.Local.iRowCount,=,V.Local.iRowCount2)
+	'All Orders are on hold, Display message of order that are on hold and cancel printing report.
+		F.Intrinsic.String.Build("All selected orders are on Hold. Pick list report canceled {0}{1}",V.Ambient.NewLine,V.Local.sMsg,V.Local.sMsg)
+		F.Intrinsic.UI.Msgbox(V.Local.sMsg)
+		Variable.Passed.777777.Set(1)
+	
+	F.Intrinsic.Control.Else
+	'Only some Orders are on hold, Display message of order that are on hold and continue printing report
+		F.Intrinsic.String.Build("Orders not on hold will be printed. Some of the selected orders are on Hold and will not be printed.{0}{1}",V.Ambient.NewLine,V.Local.sMsg,V.Local.sMsg)
+		F.Intrinsic.UI.Msgbox(V.Local.sMsg)
+	F.Intrinsic.Control.EndIf
+	
+	
+	F.Data.DataTable.Close("dtOrdersHold")
+	F.Data.DataView.Close("dtPickList","dvPickList")
+	F.Data.Datatable.Close("dtPickList")
+	
+F.Intrinsic.Control.Catch
+
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} at {6} with description {4}{1}{1}GAB Version: {5}", V.Caller.ScriptFile, V.Ambient.Newline, V.Ambient.CurrentSubroutine, V.Ambient.ErrorNumber, V.Ambient.ErrorDescription, V.Ambient.GABVersion, V.Ambient.Now, V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End()
+
+F.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.Comments.Start
+${$5$}$3.0.0.0$}$1
+${$6$}$sstanka$}$20220602141335422$}$mP+zz5Tw3sT2/nyap+FbWm4triMPqjXDGWEE8Ih8F8V3yQ5FY9ckDMyJ8pGZs/pIWhct8CgfOnQ=
+Program.Sub.Comments.End
